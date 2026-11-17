@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>字段级许可收回 · 采集管控台</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header>
+  <h1>字段级许可收回 · 采集管控台</h1>
+  <div class="header-actions">
+    <span id="worker-badge" class="badge">worker: …</span>
+    <button id="btn-refresh" class="btn">立即刷新</button>
+    <label class="auto"><input type="checkbox" id="auto-refresh" checked> 自动刷新(2s)</label>
+    <button id="btn-reset" class="btn btn-danger">重置环境</button>
+  </div>
+</header>
+
+<main>
+<section class="grid">
+  <!-- 1. Worker 控制 -->
+  <div class="card span-2">
+    <h2>1. 采集工作进程（真实 OS 进程）</h2>
+    <p class="hint">停止 = 进程被杀、心跳过期（真离线）；挂起 = 进程存活但暂停处理。</p>
+    <div id="worker-detail" class="kv"></div>
+    <div class="btn-row">
+      <button class="btn" data-worker="start">启动</button>
+      <button class="btn btn-danger" data-worker="stop">停止（模拟离线）</button>
+      <button class="btn" data-worker="suspend">挂起</button>
+      <button class="btn" data-worker="resume">恢复</button>
+    </div>
+  </div>
+
+  <!-- 2. 许可台账 -->
+  <div class="card span-2">
+    <h2>2. 许可台账（供应方许可服务）</h2>
+    <table><thead><tr><th>字段</th><th>状态</th><th>生效时间</th><th>来源通知</th><th>结果分布</th></tr></thead>
+      <tbody id="license-tbody"></tbody></table>
+    <div class="btn-row">
+      <select id="revoke-field">
+        <option>email</option><option>phone</option><option>age</option><option>city</option>
+      </select>
+      <button class="btn btn-danger" id="btn-revoke">立即收回（effective_in=0）</button>
+      <button class="btn" id="btn-restore">恢复许可</button>
+    </div>
+  </div>
+
+  <!-- 3. 通知与重发 -->
+  <div class="card span-2">
+    <h2>3. 收回通知（幂等去重 / 重发）</h2>
+    <table><thead><tr><th>seq</th><th>notification_id</th><th>字段</th><th>动作</th><th>生效时间</th><th>处理时间</th><th></th></tr></thead>
+      <tbody id="notif-tbody"></tbody></table>
+    <div class="btn-row">
+      <label>重发 seq=<input id="redeliver-seq" type="number" min="1" style="width:5rem">
+        <button class="btn" id="btn-redeliver">重发通知</button></label>
+      <button class="btn" id="btn-poll">手动拉取一次</button>
+      <span class="hint">重发生成新 seq 但 notification_id 不变 → 被去重，不重复下架。</span>
+    </div>
+  </div>
+
+  <!-- 4. 任务 -->
+  <div class="card span-2">
+    <h2>4. 采集任务（执行器 → 原始包缓存 → 入库消费者）</h2>
+    <div class="btn-row">
+      <select id="task-package">
+        <option>pkg-alpha</option><option>pkg-bravo</option><option>pkg-charlie</option>
+      </select>
+      <label class="chk">email<input type="checkbox" class="fld" value="email" checked></label>
+      <label class="chk">phone<input type="checkbox" class="fld" value="phone" checked></label>
+      <label class="chk">age<input type="checkbox" class="fld" value="age" checked></label>
+      <label class="chk">city<input type="checkbox" class="fld" value="city" checked></label>
+      <button class="btn btn-primary" id="btn-create-task">创建采集任务</button>
+    </div>
+    <table><thead><tr><th>id</th><th>uid</th><th>包</th><th>字段</th><th>状态</th><th>原因</th><th></th></tr></thead>
+      <tbody id="task-tbody"></tbody></table>
+  </div>
+
+  <!-- 5. 竞态场景编排 -->
+  <div class="card span-2">
+    <h2>5. 竞态场景一键编排</h2>
+    <div class="btn-row wrap">
+      <button class="btn btn-primary" data-scenario="race">A. 下载刚完成即收回（在途竞态）</button>
+      <button class="btn btn-primary" data-scenario="redeliver">B. 通知重发去重</button>
+      <button class="btn btn-primary" data-scenario="offline">C. 工作进程离线期间收回</button>
+      <button class="btn btn-primary" data-scenario="cancel">D. 队列任务整体取消</button>
+    </div>
+    <pre id="scenario-log" class="scenario-log"></pre>
+  </div>
+
+  <!-- 6. 字段血缘 -->
+  <div class="card span-2">
+    <h2>6. 字段血缘追踪（出现在哪些包 / 任务 / 结果）</h2>
+    <div class="btn-row">
+      <select id="lineage-field">
+        <option>email</option><option>phone</option><option>age</option><option>city</option>
+      </select>
+      <button class="btn" id="btn-lineage">查询血缘</button>
+    </div>
+    <div id="lineage-out"></div>
+  </div>
+
+  <!-- 7. 数据分离：封存证据 vs 可分发数据 -->
+  <div class="card">
+    <h2>7a. 可分发原始包缓存</h2>
+    <p class="hint">清缓存只删除 raw_cache/ 内文件；活动任务占用与封存副本均保留。</p>
+    <table><thead><tr><th>包</th><th>缓存路径</th><th>大小</th><th>哈希</th></tr></thead>
+      <tbody id="package-tbody"></tbody></table>
+    <button class="btn btn-danger" id="btn-evict">清理缓存</button>
+  </div>
+  <div class="card">
+    <h2>7b. 已封存审计证据（append-only）</h2>
+    <p class="hint">sealed/ 目录只追加，应用没有删除接口；哈希链可独立校验。</p>
+    <table><thead><tr><th>包</th><th>封存路径</th><th>sha256</th><th>原因</th></tr></thead>
+      <tbody id="seal-tbody"></tbody></table>
+    <button class="btn" id="btn-verify">校验审计哈希链</button>
+    <pre id="verify-out" class="scenario-log"></pre>
+  </div>
+
+  <!-- 8. 审计日志 -->
+  <div class="card span-2">
+    <h2>8. 审计日志（哈希链）</h2>
+    <div style="max-height:260px;overflow:auto">
+    <table><thead><tr><th>seq</th><th>时间</th><th>执行者</th><th>动作</th><th>载荷</th></tr></thead>
+      <tbody id="audit-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- 9. 本地来源核对 -->
+  <div class="card span-2">
+    <h2>9. 本地来源请求核对（供应商真实请求日志）</h2>
+    <p class="hint">真实 HTTP 请求、保存与清理均可在此与下方应用日志交叉核对。</p>
+    <table><thead><tr><th>#</th><th>时间</th><th>方法</th><th>路径</th><th>状态</th></tr></thead>
+      <tbody id="supplier-req-tbody"></tbody></table>
+  </div>
+
+  <!-- 10. 应用日志 -->
+  <div class="card span-2">
+    <h2>10. 应用日志</h2>
+    <div style="max-height:260px;overflow:auto">
+    <table><thead><tr><th>时间</th><th>级别</th><th>组件</th><th>消息</th></tr></thead>
+      <tbody id="app-log-tbody"></tbody></table>
+    </div>
+  </div>
+</section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
